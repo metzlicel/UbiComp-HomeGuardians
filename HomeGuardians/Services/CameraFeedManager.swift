@@ -27,7 +27,7 @@ class CameraFeedManager: NSObject {
     private let processingInterval: TimeInterval = 0.5 // process a frame every 0.5s
     
     private lazy var coreMLModel: VNCoreMLModel? = {
-        try? VNCoreMLModel(for: Resnet50().model)
+        try? VNCoreMLModel(for: COMOO().model)
     }()
     
     func startSession() {

@@ -18,7 +18,7 @@ struct ClassificationResult {
 class ImageClassifier {
     
     private lazy var model: VNCoreMLModel? = {
-        try? VNCoreMLModel(for: Resnet50().model)
+        try? VNCoreMLModel(for: COMOO().model)
     }()
     
     func classify(image: UIImage, completion: @escaping (ClassificationResult?) -> Void) {

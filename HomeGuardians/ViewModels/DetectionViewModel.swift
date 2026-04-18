@@ -10,7 +10,7 @@ import SwiftUI
 import Observation
 
 @Observable
-class DetectionViewModel: CameraFeedManagerDelegate {
+class DetectionViewModel: ARObjectDetectionManagerDelegate {
     
     var detectedLabel: String = ""
     var confidence: Float = 0
@@ -21,7 +21,11 @@ class DetectionViewModel: CameraFeedManagerDelegate {
     // Detectar estufa
     var isStoveDetected: Bool = false
     
-    let cameraManager = CameraFeedManager()
+    // Nueva información AR
+    var distanceInMeters: Float? = nil
+    var trackingStateText: String = "Inicializando AR..."
+    
+    let arManager = ARObjectDetectionManager()
     
     private var popupTimer: Timer?
     private let confidenceThreshold: Float = 0.6
@@ -35,36 +39,53 @@ class DetectionViewModel: CameraFeedManagerDelegate {
         switch confidence {
         case 0.85...: return .green
         case 0.6...:  return .orange
-        default:     return .red
+        default:      return .red
         }
     }
     
+    var distanceText: String {
+        guard let distanceInMeters else { return "Distancia no disponible" }
+        return String(format: "%.2f m", distanceInMeters)
+    }
+    
     func startCamera() {
-        cameraManager.delegate = self
-        cameraManager.startSession()
+        arManager.delegate = self
+        arManager.startSession()
     }
     
     func stopCamera() {
-        cameraManager.stopSession()
+        arManager.stopSession()
     }
     
+    // MARK: - ARObjectDetectionManagerDelegate
     
-    // MARK: - CameraFeedManagerDelegate
-    
-    func didDetect(label: String, confidence: Float, boundingBox: CGRect?) {
+    func didUpdateDetection(
+        label: String,
+        confidence: Float,
+        boundingBox: CGRect?,
+        distanceInMeters: Float?
+    ) {
         guard confidence >= confidenceThreshold else {
             DispatchQueue.main.async { [weak self] in
-            self?.isStoveDetected = false
+                self?.isStoveDetected = false
+                self?.distanceInMeters = nil
+                self?.detectedLabel = ""
+                self?.confidence = 0
+                self?.boundingBox = nil
             }
-            return }
+            return
+        }
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            
             self.detectedLabel = label
                 .replacingOccurrences(of: "_", with: " ")
                 .capitalized
+            
             self.confidence = confidence
             self.boundingBox = boundingBox
+            self.distanceInMeters = distanceInMeters
             
             // Detectar estufa
             self.isStoveDetected = self.isStoveLabel(label)
@@ -73,7 +94,14 @@ class DetectionViewModel: CameraFeedManagerDelegate {
         }
     }
     
-    // funcion para detectar estufa
+    func didUpdateTrackingState(_ text: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.trackingStateText = text
+        }
+    }
+    
+    // MARK: - Helpers
+    
     private func isStoveLabel(_ label: String) -> Bool {
         let normalized = label.lowercased()
         return normalized.contains("stove") ||
