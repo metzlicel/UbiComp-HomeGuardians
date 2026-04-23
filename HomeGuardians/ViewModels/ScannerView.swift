@@ -38,10 +38,10 @@ struct ScannerView: View {
                 .animation(.spring(duration: 0.3), value: viewModel.showPopup)
             }
             
-            // Stove alert
-            if viewModel.isStoveDetected {
+            // DangerZone alert
+            if viewModel.isDangerNear {
                 VStack {
-                    Text("⚠️ Estufa detectada")
+                    Text(viewModel.warningText)
                         .font(.headline)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
@@ -57,6 +57,7 @@ struct ScannerView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .animation(.easeInOut(duration: 0.25), value: viewModel.isStoveDetected)
             }
+
             
             // Top / bottom overlays
             VStack {

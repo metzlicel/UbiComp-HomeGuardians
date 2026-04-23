@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Observation
 
+
 @Observable
 class DetectionViewModel: ARObjectDetectionManagerDelegate {
     
@@ -18,8 +19,59 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
     var showPopup: Bool = false
     var isLive: Bool = true
     
-    // Detectar estufa
+    // Detectar DangerZone
+    private let dangerDistanceThreshold: Float = 1.0
     var isStoveDetected: Bool = false
+    var isOutletDetected: Bool = false
+    var isStairsDetected: Bool = false
+    
+    var isDangerNear: Bool {
+        guard let distanceInMeters else { return false }
+        return isDangerLabel(detectedLabel) && distanceInMeters <= dangerDistanceThreshold
+    }
+
+    var shouldShowStoveWarning: Bool {
+        guard let distanceInMeters else { return false }
+        return isStoveLabel(detectedLabel) && distanceInMeters <= dangerDistanceThreshold
+    }
+
+    var shouldShowOutletWarning: Bool {
+        guard let distanceInMeters else { return false }
+        return isOutletLabel(detectedLabel) && distanceInMeters <= dangerDistanceThreshold
+    }
+
+    var shouldShowStairsWarning: Bool {
+        guard let distanceInMeters else { return false }
+        return isStairsLabel(detectedLabel) && distanceInMeters <= dangerDistanceThreshold
+    }
+
+    var warningText: String {
+        if shouldShowStoveWarning {
+            return "¡Está caliente, caliente! Mejor mira desde lejos"
+        }
+        if shouldShowOutletWarning {
+            return "¡Aquí pica como abeja. Mejor aleja tus manitas"
+        }
+        if shouldShowStairsWarning {
+            return "Yo ruedo y ruedo. ¡Pero tu camina como grande!"
+        }
+        return ""
+    }
+
+    var modelNameForCurrentDanger: String? {
+        if shouldShowStoveWarning {
+            return "Stufi"
+        }
+        if shouldShowOutletWarning {
+            return "Sparky"
+        }
+        if shouldShowStairsWarning {
+            return nil   // Stepy
+        }
+        return nil
+    }
+    
+
     
     // Nueva información AR
     var distanceInMeters: Float? = nil
@@ -68,10 +120,13 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
         guard confidence >= confidenceThreshold else {
             DispatchQueue.main.async { [weak self] in
                 self?.isStoveDetected = false
+                self?.isOutletDetected = false
+                self?.isStairsDetected = false
                 self?.distanceInMeters = nil
                 self?.detectedLabel = ""
                 self?.confidence = 0
                 self?.boundingBox = nil
+                self?.arManager.removeModel()
             }
             return
         }
@@ -87,8 +142,19 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
             self.boundingBox = boundingBox
             self.distanceInMeters = distanceInMeters
             
-            // Detectar estufa
             self.isStoveDetected = self.isStoveLabel(label)
+            self.isOutletDetected = self.isOutletLabel(label)
+            self.isStairsDetected = self.isStairsLabel(label)
+
+                   
+            if let modelName = self.modelNameForCurrentDanger {
+                self.arManager.placeModelIfNeeded(
+                    modelName: modelName,
+                    boundingBox: boundingBox
+                )
+            } else {
+                self.arManager.removeModel()
+            }
             
             self.triggerPopup()
         }
@@ -100,13 +166,36 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
         }
     }
     
+    
+    
     // MARK: - Helpers
     
     private func isStoveLabel(_ label: String) -> Bool {
         let normalized = label.lowercased()
-        return normalized.contains("stove") ||
-               normalized.contains("oven") ||
-               normalized.contains("range")
+        return normalized.contains("stove")
+    }
+    
+    private func isOutletLabel(_ label: String) -> Bool {
+        let normalized = label.lowercased()
+        return normalized.contains("outlet")
+    }
+    
+    private func isStairsLabel(_ label: String) -> Bool {
+        let normalized = label.lowercased()
+        return normalized.contains("stairs")
+    }
+
+    private func isDangerObjectNear(label: String, distance: Float?) -> Bool {
+        guard let distance else { return false }
+        
+        let isDanger =
+            isStoveLabel(label) || isOutletLabel(label) || isStairsLabel(label)
+        
+        return isDanger && distance <= dangerDistanceThreshold
+    }
+    
+    private func isDangerLabel(_ label: String) -> Bool {
+        isStoveLabel(label) || isOutletLabel(label) || isStairsLabel(label)
     }
     
     private func triggerPopup() {
