@@ -19,8 +19,16 @@ struct ScannerView: View {
             ARDetectionView(arView: viewModel.arManager.arView)
                 .ignoresSafeArea()
             
+            // Filtro rojo si se permanece en Danger Zone
+            if viewModel.showRedFilter {
+                Color.red.opacity(0.35)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.showRedFilter)
+            }
+            
             // Bounding box overlay
-            if let box = viewModel.boundingBox {
+            if viewModel.isDangerNear, let box = viewModel.boundingBox {
                 BoundingBoxOverlay(
                     boundingBox: box,
                     label: viewModel.detectedLabel
@@ -41,7 +49,7 @@ struct ScannerView: View {
             // DangerZone alert
             if viewModel.isDangerNear {
                 VStack {
-                    Text(viewModel.warningText)
+                    Text(viewModel.isDangerText)
                         .font(.headline)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
@@ -55,7 +63,7 @@ struct ScannerView: View {
                     Spacer()
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
-                .animation(.easeInOut(duration: 0.25), value: viewModel.isStoveDetected)
+                .animation(.easeInOut(duration: 0.25), value: viewModel.isDangerNear)
             }
 
             
@@ -82,6 +90,17 @@ struct ScannerView: View {
                     
                     Spacer()
                     
+                    Text("⭐ \(viewModel.starCounter)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.yellow.opacity(0.85))
+                        .clipShape(Capsule())
+                    
+                    Spacer()
+                                    
                     // Right badges
                     if !viewModel.detectedLabel.isEmpty {
                         VStack(alignment: .trailing, spacing: 8) {

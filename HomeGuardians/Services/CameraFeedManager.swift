@@ -24,7 +24,7 @@ class CameraFeedManager: NSObject {
     private let processingQueue = DispatchQueue(label: "camera.processing.queue")
     
     private var lastProcessedTime = Date()
-    private let processingInterval: TimeInterval = 0.5 // process a frame every 0.5s
+    private let processingInterval: TimeInterval = 0.5 // process a frame every 0.5s //investigar tiempo de reaccion de niños desempeño motriz
     
     private lazy var coreMLModel: VNCoreMLModel? = {
         try? VNCoreMLModel(for: COMOO().model)

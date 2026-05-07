@@ -30,9 +30,10 @@ final class ARObjectDetectionManager: NSObject, ARSessionDelegate {
     let arView: ARView
     
     private var lastProcessedTime = Date.distantPast
-    private let processingInterval: TimeInterval = 0.8
+    private let processingInterval: TimeInterval = 0.5
     private let processingQueue = DispatchQueue(label: "com.homeguardians.visionProcessing")
     private var isProcessingFrame = false
+    private let ciContext = CIContext()
     
     // MARK: - AR model state
     private var currentModelName: String?
@@ -81,53 +82,69 @@ final class ARObjectDetectionManager: NSObject, ARSessionDelegate {
         let now = Date()
         guard now.timeIntervalSince(lastProcessedTime) >= processingInterval else { return }
         guard !isProcessingFrame else { return }
-        
+
         lastProcessedTime = now
         updateTrackingText(from: frame.camera.trackingState)
-        
-        let pixelBuffer = frame.capturedImage
+
         let cameraTransform = frame.camera.transform
-        
+        let centerDistance = distanceToCenterObject(cameraTransform: cameraTransform)
+
+        guard let centerDistance, centerDistance <= 1.0 else {
+            DispatchQueue.main.async { [weak self] in
+                self?.removeModel()
+            }
+            return
+        }
+
+        guard let cgImage = makeCGImage(from: frame.capturedImage) else { return }
+
         isProcessingFrame = true
-        
+
         processingQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
+            defer {
+                DispatchQueue.main.async {
+                    self.isProcessingFrame = false
+                }
+            }
+
             autoreleasepool {
                 self.processFrame(
-                    pixelBuffer: pixelBuffer,
+                    cgImage: cgImage,
                     cameraTransform: cameraTransform
                 )
             }
-            
-            DispatchQueue.main.async {
-                self.isProcessingFrame = false
-            }
         }
+    }
+    
+    private func makeCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        return ciContext.createCGImage(ciImage, from: ciImage.extent)
     }
     
     // MARK: - CoreML + Vision
     
     private func processFrame(
-        pixelBuffer: CVPixelBuffer,
+        cgImage: CGImage,
         cameraTransform: simd_float4x4
     ) {
         guard let model = coreMLModel else { return }
-        
+
         let request = VNCoreMLRequest(model: model) { [weak self] request, _ in
             guard let self = self else { return }
-            
+
             if let observations = request.results as? [VNRecognizedObjectObservation],
                let top = observations.first,
                let label = top.labels.first {
-                
+
                 let box = top.boundingBox
                 let screenPoint = self.screenPoint(from: box, in: self.arView)
                 let distance = self.measureDistance(
                     from: screenPoint,
                     cameraTransform: cameraTransform
                 )
-                
+
                 DispatchQueue.main.async {
                     self.delegate?.didUpdateDetection(
                         label: label.identifier,
@@ -138,10 +155,10 @@ final class ARObjectDetectionManager: NSObject, ARSessionDelegate {
                 }
                 return
             }
-            
+
             if let observations = request.results as? [VNClassificationObservation],
                let top = observations.first {
-                
+
                 DispatchQueue.main.async {
                     self.delegate?.didUpdateDetection(
                         label: top.identifier,
@@ -152,15 +169,14 @@ final class ARObjectDetectionManager: NSObject, ARSessionDelegate {
                 }
             }
         }
-        
+
         request.imageCropAndScaleOption = .centerCrop
-        
+
         let handler = VNImageRequestHandler(
-            cvPixelBuffer: pixelBuffer,
-            orientation: .right,
-            options: [:]
+            cgImage: cgImage,
+            orientation: .right
         )
-        
+
         do {
             try handler.perform([request])
         } catch {
@@ -229,6 +245,26 @@ final class ARObjectDetectionManager: NSObject, ARSessionDelegate {
         )
         
         return simd_distance(hitPosition, cameraPosition)
+    }
+    
+    private func distanceToCenterObject(cameraTransform: simd_float4x4) -> Float? {
+        let centerPoint = CGPoint(
+            x: arView.bounds.midX,
+            y: arView.bounds.midY
+        )
+        
+        let results = arView.raycast(
+            from: centerPoint,
+            allowing: .estimatedPlane,
+            alignment: .any
+        )
+        
+        guard let first = results.first else { return nil }
+        
+        return distanceToCamera(
+            from: first.worldTransform,
+            cameraTransform: cameraTransform
+        )
     }
     
     // MARK: - Tracking state
