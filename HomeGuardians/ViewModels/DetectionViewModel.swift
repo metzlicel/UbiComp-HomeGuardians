@@ -22,11 +22,39 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
     // Contador de Stars
     var starCounter: Int = 0
     var showRedFilter: Bool = false
+    var showStarRewardAnimation: Bool = false
+    
+    private struct DetectionSample {
+        let label: String
+        let confidence: Float
+        let boundingBox: CGRect?
+        let distanceInMeters: Float?
+        let date: Date
+    }
 
-    private var dangerStartTime: Date?
-    private var safeStartTime: Date?
-    private var hasEarnedStarForCurrentDanger = false
-    private var wasInDangerZone = false
+    private var recentDetections: [DetectionSample] = []
+
+    private let detectionMemoryLimit = 5
+    private let minimumStableDetections = 2
+    private let maximumMissedDetections = 3
+
+    private var missedDetectionCount = 0
+    
+    private enum DetectionState {
+        case noObject // No hay objeto estable
+        case objectSeen // Hay objeto peligroso detectado, pero todavia no esta cerca
+        case dangerNear(startTime: Date) // Esta cerca y empezo el contador de peligro
+        case dangerHeld // Lleva cerca mas de 5seg, entonces se muestra el filtro rojo
+        case safeRecovering(startTime: Date) // Ya se alejo o se perdio el peligro, y esta contando los 5seg seguros
+        case rewarded // Ya gano estrella por este ciclo
+    }
+    
+    private var detectionState: DetectionState = .noObject
+
+//    private var dangerStartTime: Date?
+//    private var safeStartTime: Date?
+//    private var hasEarnedStarForCurrentDanger = false
+//    private var wasInDangerZone = false
 
     private let dangerStayDuration: TimeInterval = 5.0
     private let safeStayDuration: TimeInterval = 5.0
@@ -97,42 +125,88 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
     
     private func updateDangerZoneState() {
         let now = Date()
-        
-        if isDangerNear {
-            wasInDangerZone = true
-            safeStartTime = nil
-            
-            if dangerStartTime == nil {
-                dangerStartTime = now
+
+        switch detectionState {
+        case .noObject:
+            showRedFilter = false
+
+            if isDangerLabel(detectedLabel) {
+                detectionState = isDangerNear
+                    ? .dangerNear(startTime: now)
+                    : .objectSeen
             }
-            
-            if let dangerStartTime,
-               now.timeIntervalSince(dangerStartTime) >= dangerStayDuration {
+
+        case .objectSeen:
+            showRedFilter = false
+
+            if detectedLabel.isEmpty {
+                detectionState = .noObject
+            } else if isDangerNear {
+                detectionState = .dangerNear(startTime: now)
+            }
+
+        case .dangerNear(let startTime):
+            if detectedLabel.isEmpty {
+                detectionState = .safeRecovering(startTime: now)
+                showRedFilter = false
+                return
+            }
+
+            if !isDangerNear {
+                detectionState = .safeRecovering(startTime: now)
+                showRedFilter = false
+                return
+            }
+
+            if now.timeIntervalSince(startTime) >= dangerStayDuration {
+                detectionState = .dangerHeld
                 showRedFilter = true
             }
-            
-        } else {
-            dangerStartTime = nil
-            showRedFilter = false
-            
-            guard wasInDangerZone else { return }
-            
-            if safeStartTime == nil {
-                safeStartTime = now
+
+        case .dangerHeld:
+            if detectedLabel.isEmpty || !isDangerNear {
+                detectionState = .safeRecovering(startTime: now)
+                showRedFilter = false
+            } else {
+                showRedFilter = true
             }
-            
-            if let safeStartTime,
-               now.timeIntervalSince(safeStartTime) >= safeStayDuration,
-               !hasEarnedStarForCurrentDanger {
-                
+
+        case .safeRecovering(let startTime):
+            showRedFilter = false
+
+            if isDangerNear {
+                detectionState = .dangerNear(startTime: now)
+                return
+            }
+
+            if now.timeIntervalSince(startTime) >= safeStayDuration {
                 starCounter += 1
-                hasEarnedStarForCurrentDanger = true
-                wasInDangerZone = false
-                self.safeStartTime = nil
+                triggerStarRewardAnimation()
+                detectionState = .rewarded
+            }
+
+        case .rewarded:
+            showRedFilter = false
+
+            if detectedLabel.isEmpty {
+                detectionState = .noObject
+            } else if isDangerNear {
+                detectionState = .dangerNear(startTime: now)
+            } else {
+                detectionState = .objectSeen
             }
         }
     }
     
+    private func triggerStarRewardAnimation() {
+        showStarRewardAnimation = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            withAnimation(.easeOut(duration: 0.25)) {
+                self?.showStarRewardAnimation = false
+            }
+        }
+    }
     
     // Nueva información AR
     var distanceInMeters: Float? = nil
@@ -173,58 +247,125 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
     
     // MARK: - ARObjectDetectionManagerDelegate
     
+    private func addDetectionSample(
+        label: String,
+        confidence: Float,
+        boundingBox: CGRect?,
+        distanceInMeters: Float?
+    ) {
+        let sample = DetectionSample(
+            label: label,
+            confidence: confidence,
+            boundingBox: boundingBox,
+            distanceInMeters: distanceInMeters,
+            date: Date()
+        )
+
+        recentDetections.append(sample)
+
+        if recentDetections.count > detectionMemoryLimit {
+            recentDetections.removeFirst()
+        }
+    }
+    
+    private func stableDetection() -> DetectionSample? {
+        let validSamples = recentDetections.filter { $0.confidence >= confidenceThreshold }
+
+        guard validSamples.count >= minimumStableDetections else {
+            return nil
+        }
+
+        let groupedByLabel = Dictionary(grouping: validSamples) { normalizedLabel($0.label) }
+
+        guard let strongestGroup = groupedByLabel.values.max(by: { $0.count < $1.count }),
+              strongestGroup.count >= minimumStableDetections else {
+            return nil
+        }
+
+        let latest = strongestGroup.last
+        let smoothedDistance = medianDistance(from: strongestGroup)
+
+        return DetectionSample(
+            label: latest?.label ?? "",
+            confidence: strongestGroup.map(\.confidence).max() ?? 0,
+            boundingBox: latest?.boundingBox,
+            distanceInMeters: smoothedDistance,
+            date: Date()
+        )
+    }
+    
     func didUpdateDetection(
         label: String,
         confidence: Float,
         boundingBox: CGRect?,
         distanceInMeters: Float?
     ) {
-        guard confidence >= confidenceThreshold else {
-            DispatchQueue.main.async { [weak self] in
-//                self?.isStoveDetected = false
-//                self?.isOutletDetected = false
-//                self?.isStairsDetected = false
-                self?.distanceInMeters = nil
-                self?.detectedLabel = ""
-                self?.confidence = 0
-                self?.boundingBox = nil
-                self?.arManager.removeModel()
-                self?.updateDangerZoneState()
-            }
-            return
-        }
-        
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            self.detectedLabel = label
-                .replacingOccurrences(of: "_", with: " ")
-                .capitalized
-            
-            self.confidence = confidence
-//            self.boundingBox = boundingBox
-            self.distanceInMeters = distanceInMeters
-            self.boundingBox = self.isDangerNear ? boundingBox : nil
-            
+            guard let self else { return }
+
+            guard confidence >= self.confidenceThreshold else {
+                self.handleMissedDetection()
+                return
+            }
+
+            self.missedDetectionCount = 0
+
+            self.addDetectionSample(
+                label: label,
+                confidence: confidence,
+                boundingBox: boundingBox,
+                distanceInMeters: distanceInMeters
+            )
+
+            guard let stable = self.stableDetection() else {
+                return
+            }
+
+            self.detectedLabel = self.displayLabel(stable.label)
+            self.confidence = stable.confidence
+            self.distanceInMeters = stable.distanceInMeters
+            self.boundingBox = self.isDangerNear ? stable.boundingBox : nil
+
             self.updateDangerZoneState()
 
-//            self.isStoveDetected = self.isStoveLabel(label)
-//            self.isOutletDetected = self.isOutletLabel(label)
-//            self.isStairsDetected = self.isStairsLabel(label)
-
-                   
             if let modelName = self.modelNameForCurrentDanger, self.isDangerNear {
                 self.arManager.placeModelIfNeeded(
                     modelName: modelName,
-                    boundingBox: boundingBox
+                    boundingBox: stable.boundingBox
                 )
             } else {
                 self.arManager.removeModel()
             }
-            
+
             self.triggerPopup()
         }
     }
+    
+    private func handleMissedDetection() {
+        missedDetectionCount += 1
+
+        guard missedDetectionCount >= maximumMissedDetections else {
+            updateDangerZoneState()
+            return
+        }
+
+        recentDetections.removeAll()
+        distanceInMeters = nil
+        detectedLabel = ""
+        confidence = 0
+        boundingBox = nil
+        arManager.removeModel()
+
+        switch detectionState {
+        case .dangerNear, .dangerHeld:
+            detectionState = .safeRecovering(startTime: Date())
+        default:
+            detectionState = .noObject
+        }
+
+        updateDangerZoneState()
+    }
+    
     
     func didUpdateTrackingState(_ text: String) {
         DispatchQueue.main.async { [weak self] in
@@ -263,6 +404,36 @@ class DetectionViewModel: ARObjectDetectionManagerDelegate {
     private func isDangerLabel(_ label: String) -> Bool {
         isStoveLabel(label) || isOutletLabel(label) || isStairsLabel(label)
     }
+    
+    private func normalizedLabel(_ label: String) -> String {
+        label
+            .replacingOccurrences(of: "_", with: " ")
+            .lowercased()
+    }
+
+    private func displayLabel(_ label: String) -> String {
+        label
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    private func medianDistance(from samples: [DetectionSample]) -> Float? {
+        let distances = samples
+            .compactMap(\.distanceInMeters)
+            .filter { $0.isFinite && $0 > 0 }
+
+        guard !distances.isEmpty else { return nil }
+
+        let sorted = distances.sorted()
+        let middle = sorted.count / 2
+
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) / 2
+        } else {
+            return sorted[middle]
+        }
+    }
+    
     
     private func triggerPopup() {
         showPopup = true

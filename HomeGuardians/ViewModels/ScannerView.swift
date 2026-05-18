@@ -27,6 +27,12 @@ struct ScannerView: View {
                     .animation(.easeInOut(duration: 0.25), value: viewModel.showRedFilter)
             }
             
+            if viewModel.showStarRewardAnimation {
+                StarRewardAnimationView()
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    .zIndex(10)
+            }
+            
             // Bounding box overlay
             if viewModel.isDangerNear, let box = viewModel.boundingBox {
                 BoundingBoxOverlay(
@@ -35,34 +41,81 @@ struct ScannerView: View {
                 )
             }
             
-            // Detection popup
-            if viewModel.showPopup {
-                DetectionPopup(
-                    label: viewModel.detectedLabel,
-                    confidence: viewModel.confidenceText,
-                    color: viewModel.confidenceColor
-                )
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .animation(.spring(duration: 0.3), value: viewModel.showPopup)
+            // Detection info panel - top right
+            VStack {
+                HStack {
+                    Spacer()
+                    
+                    VStack(alignment: .center, spacing: 12) {
+                        
+                        // Precision
+                        if !viewModel.detectedLabel.isEmpty {
+                            Text("Precision: \(viewModel.confidenceText)")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(viewModel.confidenceColor.opacity(0.85))
+                                .clipShape(Capsule())
+                        }
+                        
+                        // Detection popup
+                        if viewModel.showPopup {
+                            DetectionPopup(
+                                label: viewModel.detectedLabel,
+                                confidence: viewModel.confidenceText,
+                                color: viewModel.confidenceColor
+                            )
+                            .frame(width: 220)
+                            .transition(.scale(scale: 0.85).combined(with: .opacity))
+                            .animation(.spring(duration: 0.3), value: viewModel.showPopup)
+                        }
+                        
+                        // Distance
+                        if !viewModel.distanceText.isEmpty {
+                            Text("Distance: \(viewModel.distanceText)")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(.black.opacity(0.6))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(Color.white.opacity(0.7))
+                            .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 4)
+                    )
+                }
+                
+                Spacer()
             }
+            .padding(.top, 16)
+            .padding(.trailing, 16)
             
-            // DangerZone alert
+            // DangerZone alert at bottom
             if viewModel.isDangerNear {
                 VStack {
+                    Spacer()
+                    
                     Text(viewModel.isDangerText)
-                        .font(.headline)
+                        .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
                         .background(Color.red.opacity(0.9))
-                        .clipShape(Capsule())
-                        .shadow(radius: 10)
-                        .padding(.top, 90)
-                    
-                    Spacer()
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .shadow(radius: 12)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 95)
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(.easeInOut(duration: 0.25), value: viewModel.isDangerNear)
             }
 
@@ -91,38 +144,18 @@ struct ScannerView: View {
                     Spacer()
                     
                     Text("⭐ \(viewModel.starCounter)")
-                        .font(.caption)
-                        .fontWeight(.semibold)
+                        .font(.title3)
+                        .fontWeight(.bold)
                         .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.yellow.opacity(0.85))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.yellow.opacity(0.9))
                         .clipShape(Capsule())
+                        .shadow(radius: 8)
                     
                     Spacer()
                                     
-                    // Right badges
-                    if !viewModel.detectedLabel.isEmpty {
-                        VStack(alignment: .trailing, spacing: 8) {
-                            Text(viewModel.confidenceText)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(viewModel.confidenceColor.opacity(0.85))
-                                .clipShape(Capsule())
-                            
-                            Text(viewModel.distanceText)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.black.opacity(0.55))
-                                .clipShape(Capsule())
-                        }
-                    }
+                    
                 }
                 .padding()
                 
@@ -212,5 +245,49 @@ struct BoundingBoxOverlay: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+}
+
+// MARK: Star Animation
+struct StarRewardAnimationView: View {
+    @State private var scale: CGFloat = 0.25
+    @State private var opacity: Double = 0
+    @State private var rotation: Double = -12
+    @State private var yOffset: CGFloat = 20
+
+    var body: some View {
+        Image("star")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 220, height: 220)
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .rotationEffect(.degrees(rotation))
+            .offset(y: yOffset)
+            .shadow(color: .yellow.opacity(0.55), radius: 24)
+            .onAppear {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
+                    scale = 1.15
+                    opacity = 1
+                    rotation = 8
+                    yOffset = -8
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        scale = 1.0
+                        rotation = 0
+                        yOffset = 0
+                    }
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    withAnimation(.easeIn(duration: 0.3)) {
+                        scale = 1.35
+                        opacity = 0
+                        yOffset = -30
+                    }
+                }
+            }
     }
 }
